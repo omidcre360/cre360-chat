@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>CRE360 Chat — Test</title>
+  </head>
+  <body style="background:#0B0B0B; height:200vh; color:#fff; margin:0; font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;">
+    <h1 style="padding:24px;">CRE360 Chat — Test Page</h1>
+
+    <script
+      src="./cre360-chat.js"
+      data-api-base="http://localhost:8787"
+      data-endpoint="/chat"
+      data-bot-name="CRE360 Assistant"
+      data-primary="#BFA77A"
+      data-surface="#0B0B0B"
+      data-text="#FFFFFF"
+      data-accent="#D9CBA2"
+      data-starter-prompts='[
+        {"label":"Today’s Signal","text":"Give me today’s CRE360 Signal in 3 bullets."},
+        {"label":"Underwriting","text":"Pressure-test my hotel underwriting assumptions."},
+        {"label":"Extended-Stay","text":"Why are extended-stay hotels outperforming in 2025?"}
+      ]'
+      defer>
+    </script>
+  </body>
+</html>
