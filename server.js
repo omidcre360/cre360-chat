@@ -1,17 +1,17 @@
-// server.js — CRE360 Signal API (stable with disclaimer)
+// server.js — CRE360 Signal API (2 buttons, reliable Rates Now)
 const express = require("express");
 const cors = require("cors");
 const { OpenAI } = require("openai");
-const fetch = require("node-fetch");
 require("dotenv").config();
 
 const app = express();
-app.use(cors());
+app.use(cors());            // lock later if you want
 app.use(express.json());
 
 // ---------- OpenAI ----------
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// Voice + context
 const SYSTEM_PROMPT = [
   "You are CRE360 Signal — institutional, concise, decisive.",
   "Prioritize extended-stay hotels, underwriting logic, development risk, and daily Signals.",
@@ -24,58 +24,51 @@ const CONTEXT = [
   "Cap math: Value = NOI / CapRate; CapRate = NOI / Value; NOI = Value * CapRate."
 ].join(" ");
 
-// ---------- Live Rates ----------
+// ---------- Live Rates (Treasury only, reliable) ----------
 async function getTreasuryCurve() {
+  // U.S. Treasury Daily Yield Curve API (no key). Pull latest record only.
   const url =
-    "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/accounting/od/" +
-    "daily_treasury_yield_curve?sort=-record_date&fields=record_date,bc_2year,bc_5year,bc_10year&page%5Bnumber%5D=1";
-  const r = await fetch(url);
+    "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/" +
+    "accounting/od/daily_treasury_yield_curve" +
+    "?sort=-record_date&fields=record_date,bc_2year,bc_5year,bc_10year&page%5Bnumber%5D=1";
+
+  const r = await fetch(url, { method: "GET" });
+  if (!r.ok) throw new Error("Treasury API " + r.status);
   const j = await r.json();
-  const row = j.data[0];
+  const row = j && j.data && j.data[0];
+  if (!row) throw new Error("Treasury data empty");
+
+  const two = Number(row.bc_2year);
+  const five = Number(row.bc_5year);
+  const ten = Number(row.bc_10year);
+  const spread = (isFinite(two) && isFinite(ten)) ? (two - ten) : null;
+
+  // Chicago timestamp based on record_date
+  const asOfCT = (() => {
+    try { return new Date(row.record_date + "T12:00:00Z").toLocaleString("en-US", { timeZone: "America/Chicago" }); }
+    catch { return new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }); }
+  })();
+
   return {
-    date: row.record_date,
-    twoY: Number(row.bc_2year),
-    fiveY: Number(row.bc_5year),
-    tenY: Number(row.bc_10year),
-    spread_2s10s: Number(row.bc_2year) - Number(row.bc_10year),
-    source: "U.S. Treasury Daily Yield Curve"
+    as_of_ct: asOfCT,
+    treasuries: { "2Y": two, "5Y": five, "10Y": ten, spread_2s10s: spread },
+    sources: { treasuries: "U.S. Treasury Daily Yield Curve (fiscaldata.treasury.gov)" }
   };
-}
-
-async function getSOFR() {
-  try {
-    const r = await fetch("https://markets.newyorkfed.org/api/rates/secured/sofr/last/1.json");
-    const j = await r.json();
-    const item = (j.refRates || [])[0];
-    return { rate: Number(item.percentRate), date: item.effectiveDate, source: "NY Fed SOFR" };
-  } catch {
-    return { rate: null, date: null, source: "SOFR unavailable" };
-  }
-}
-
-function tsChicago(dateStr) {
-  const d = new Date(dateStr + "T12:00:00Z");
-  return d.toLocaleString("en-US", { timeZone: "America/Chicago" });
 }
 
 app.get("/rates", async (_req, res) => {
   try {
-    const [treas, sofr] = await Promise.all([getTreasuryCurve(), getSOFR()]);
-    res.json({
-      as_of_ct: tsChicago(treas.date),
-      treasuries: { "2Y": treas.twoY, "5Y": treas.fiveY, "10Y": treas.tenY, spread_2s10s: treas.spread_2s10s },
-      sofr: sofr.rate,
-      sources: { treasuries: treas.source, sofr: sofr.source }
-    });
+    const data = await getTreasuryCurve();
+    res.json(data);
   } catch (e) {
-    res.status(502).json({ error: "rates_fetch_failed", message: e.message });
+    res.status(502).json({ error: "rates_fetch_failed", message: e.message || "unknown" });
   }
 });
 
 // ---------- /chat ----------
 app.post("/chat", async (req, res) => {
   try {
-    const text = String(req.body.message || "").slice(0, 8000);
+    const text = String((req.body && req.body.message) || "").slice(0, 8000);
     if (!text) return res.status(400).json({ error: "Missing message" });
 
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
@@ -98,12 +91,12 @@ app.post("/chat", async (req, res) => {
     }
     res.end();
   } catch (e) {
-    console.error("Chat error:", e.message);
+    console.error("Chat error:", e && e.message ? e.message : e);
     try { res.end(" (service error)"); } catch {}
   }
 });
 
-// ---------- /console ----------
+// ---------- /console (2 buttons, gold/bold chips, disclaimer) ----------
 app.get("/console", (_req, res) => {
   const API = process.env.RENDER_EXTERNAL_URL || "https://cre360-signal-api.onrender.com";
   res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -148,30 +141,39 @@ app.get("/console", (_req, res) => {
     "  }catch(e){ bot.textContent='(network error)'; }",
     "}",
 
-    // Buttons
+    // 2 buttons
     "var starters=[",
     " { label:'📰 Today\\'s Signal', kind:'auto', text:'Give me today\\'s CRE360 Signal in 3 bullets.' },",
-    " { label:'📈 Rates Now', kind:'live' }",
+    " { label:'📈 Rates Now',       kind:'live' }",
     "];",
 
+    // Wire buttons
     "starters.forEach(function(sx){",
     "  var b=document.createElement('button'); b.className='chip'; b.textContent=sx.label;",
+
     "  if(sx.kind==='auto'){ b.onclick=function(){ ask(sx.text); }; }",
     "  else if(sx.kind==='live'){",
     "    b.onclick=async function(){",
     "      var bot=bub('Fetching live rates...','t');",
-    "      try{ var r=await fetch(API+'/rates'); var d=await r.json();",
-    "        var txt='Rates Now ('+d.as_of_ct+') 10Y:'+d.treasuries['10Y']+'%, 5Y:'+d.treasuries['5Y']+'%, 2Y:'+d.treasuries['2Y']+'%; 2s10s:'+d.treasuries.spread_2s10s+'; SOFR:'+(d.sofr!=null?d.sofr+'%':'n/a');",
-    "        bot.textContent=txt; ask('Market take: '+txt);",
-    "      }catch(e){ bot.textContent='(rates error)'; }",
+    "      try{",
+    "        var r=await fetch(API+'/rates',{cache:'no-store'});",
+    "        if(!r.ok){ var msg='(rates error '+r.status+')'; try{ var j=await r.json(); if(j.message) msg+=' '+j.message; }catch(_){ } bot.textContent=msg; return; }",
+    "        var d=await r.json();",
+    "        var tre=d.treasuries||{};",
+    "        var txt='Rates Now ('+(d.as_of_ct||'CT')+') 10Y:'+tre['10Y']+'%, 5Y:'+tre['5Y']+'%, 2Y:'+tre['2Y']+'%; 2s10s:'+tre.spread_2s10s;",
+    "        bot.textContent=txt;",
+    "        ask('Using these fresh rates: '+txt+'. In 2 bullets: market take and underwriting implications for CRE debt.');",
+    "      }catch(e){ bot.textContent='(network error on rates)'; }",
     "    };",
     "  }",
+
     "  chips.appendChild(b);",
     "});",
 
-    // Greeting disclaimer
-    "bub('Disclaimer: I do not provide investment advice. I\\'ll do my best to help you analyze CRE360 signals, underwriting, and development risks.','t');",
+    // Disclaimer greeting (ASCII-safe)
+    "bub('Disclaimer: I do not provide investment advice. I will do my best to help you analyze CRE360 signals, underwriting, and development risks.','t');",
 
+    // freeform send
     "s.onclick=function(){ ask(f.value.trim()); };",
     "f.onkeydown=function(e){ if(e.key==='Enter') ask(f.value.trim()); };",
     "})();",
