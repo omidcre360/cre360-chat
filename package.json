@@ -1,12 +1,14 @@
 {
-  "name": "cre360-signal",
-  "version": "1.0.0",
-  "main": "server.js",
-  "scripts": { "start": "node server.js" },
+  "name": "cre360-signal-api",
+  "private": true,
+  "scripts": {
+    "build": "echo no-build",
+    "start": "node server.cjs"
+  },
+  "engines": { "node": ">=18.18" },
   "dependencies": {
-    "express": "^4.19.2",
     "cors": "^2.8.5",
-    "openai": "^4.52.2",
-    "dotenv": "^16.4.5"
+    "express": "^4.19.2",
+    "path-to-regexp": "^6.2.2"
   }
 }
