@@ -1,30 +1,118 @@
-// server.js — CRE360 Signal API (stable)
+// server.js — CRE360 Signal API (forms + live rates, ASCII-safe)
 const express = require("express");
 const cors = require("cors");
 const { OpenAI } = require("openai");
+const fetch = require("node-fetch"); // for live data
 require("dotenv").config();
 
 const app = express();
-app.use(cors());            // lock later if you want: const corsOptions={origin:["https://cre360.ai","https://www.cre360.ai"]}; app.use(cors(corsOptions));
+
+// CORS (loosen later if needed)
+// const corsOptions = { origin: ["https://cre360.ai","https://www.cre360.ai"] };
+// app.use(cors(corsOptions));
+app.use(cors());
 app.use(express.json());
 
 // ---------- OpenAI ----------
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Voice + context
+// Voice + quick context
 const SYSTEM_PROMPT = [
   "You are CRE360 Signal — institutional, concise, decisive.",
   "Prioritize extended-stay hotels, underwriting logic, development risk, and daily Signals.",
   "Style: point-first answer, then 2-4 bullets with specifics. No fluff.",
   "Never claim to be a broker; refer to CRE360 Advisory for representation.",
-  "If calculating, show the key number first, then why it matters."
+  "If the user asks for calculations, show the key number first, then a short why-it-matters note."
 ].join(" ");
 
 const CONTEXT = [
-  "Formulas: DSCR = NOI / Annual Debt Service; Debt Yield = NOI / Loan.",
-  "Cap math: Value = NOI / CapRate; CapRate = NOI / Value; NOI = Value * CapRate.",
-  "Amortized payment: use standard mortgage payment formula; if constraints conflict, state binding constraint."
+  "Extended-stay: resilient occupancy, lean staffing, lower turnover costs, weekly LOS economics.",
+  "Deal screening: sponsor track record, capital stack clarity, brand or flag fit, site feasibility, exit paths.",
+  "Development risk: entitlements, GC capacity and schedule realism, lender covenants, contingency sufficiency.",
+  "Operator lens: cash conversion cycle, FF&E and PIP exposure, ramp realism, RevPAR vs comp set.",
+  "When asked to calculate DSCR: DSCR = NOI / Annual Debt Service.",
+  "When asked debt yield: Debt Yield = NOI / Loan Amount.",
+  "When asked cap rate math: Value = NOI / CapRate; CapRate = NOI / Value; NOI = Value * CapRate.",
+  "When asked amortized payment logic: Use standard mortgage payment formula; if constraints conflict, state binding constraint."
 ].join(" ");
+
+// ---------- Live Rates helper ----------
+async function getTreasuryCurve() {
+  // U.S. Treasury Daily Yield Curve Rates (no API key)
+  const url =
+    "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/accounting/od/"+
+    "daily_treasury_yield_curve?sort=-record_date&fields=record_date,bc_2year,bc_5year,bc_10year&page%5Bnumber%5D=1";
+  const r = await fetch(url, { timeout: 10000 });
+  if (!r.ok) throw new Error("Treasury API error " + r.status);
+  const j = await r.json();
+  const row = j && j.data && j.data[0] ? j.data[0] : null;
+  if (!row) throw new Error("Treasury API empty");
+  const two = row.bc_2year ? Number(row.bc_2year) : null;
+  const five = row.bc_5year ? Number(row.bc_5year) : null;
+  const ten = row.bc_10year ? Number(row.bc_10year) : null;
+  const spread = (two != null && ten != null) ? (two - ten) : null; // 2s - 10s (negative = inverted)
+  return {
+    date: row.record_date, // YYYY-MM-DD (ET)
+    twoY: two,
+    fiveY: five,
+    tenY: ten,
+    spread_2s10s: spread,
+    source: "U.S. Treasury Daily Yield Curve (fiscaldata.treasury.gov)"
+  };
+}
+
+async function getSOFR() {
+  // Try NY Fed SOFR JSON (no key). If it fails, return null safely.
+  // Endpoint observed: markets.newyorkfed.org (may change; we fail soft if blocked)
+  const url = "https://markets.newyorkfed.org/api/rates/secured/sofr/last/1.json";
+  try {
+    const r = await fetch(url, { timeout: 10000 });
+    if (!r.ok) throw new Error("SOFR API error " + r.status);
+    const j = await r.json();
+    // Expected shape: { refRates: [{ effectiveDate, percentRate, ... }] }
+    const item = j && (j.refRates || j.data || [])[0];
+    if (!item) throw new Error("SOFR empty");
+    const rate = Number(item.percentRate || item.rate || item.value);
+    const date = item.effectiveDate || item.date || "";
+    return { rate, date, source: "NY Fed SOFR" };
+  } catch (_e) {
+    return { rate: null, date: null, source: "NY Fed SOFR (unavailable)" };
+  }
+}
+
+function tsChicago(dateStr) {
+  try {
+    const d = dateStr ? new Date(dateStr + "T12:00:00Z") : new Date();
+    return d.toLocaleString("en-US", { timeZone: "America/Chicago" });
+  } catch {
+    return new Date().toLocaleString("en-US", { timeZone: "America/Chicago" });
+  }
+}
+
+// ---------- /rates (public JSON for the panel) ----------
+app.get("/rates", async (_req, res) => {
+  try {
+    const [treas, sofr] = await Promise.all([getTreasuryCurve(), getSOFR()]);
+    const out = {
+      as_of_ct: tsChicago(treas.date),
+      treasuries: {
+        "2Y": treas.twoY,
+        "5Y": treas.fiveY,
+        "10Y": treas.tenY,
+        spread_2s10s: treas.spread_2s10s
+      },
+      sofr: sofr.rate,
+      sources: {
+        treasuries: treas.source,
+        sofr: sofr.source,
+        note: "Prime requires WSJ or a bank data source (not included here)."
+      }
+    };
+    res.json(out);
+  } catch (e) {
+    res.status(502).json({ error: "rates_fetch_failed", message: e.message });
+  }
+});
 
 // ---------- /chat ----------
 app.post("/chat", async (req, res) => {
@@ -51,7 +139,8 @@ app.post("/chat", async (req, res) => {
         (chunk.choices &&
           chunk.choices[0] &&
           chunk.choices[0].delta &&
-          chunk.choices[0].delta.content) || "";
+          chunk.choices[0].delta.content) ||
+        "";
       if (delta) res.write(delta);
     }
     res.end();
@@ -61,7 +150,7 @@ app.post("/chat", async (req, res) => {
   }
 });
 
-// ---------- /console (inline UI; gold bold chips; mini-forms) ----------
+// ---------- /console (inline UI; gold chips; forms; live Rates Now) ----------
 app.get("/console", (_req, res) => {
   const API = process.env.RENDER_EXTERNAL_URL || "https://cre360-signal-api.onrender.com";
   res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -119,7 +208,7 @@ app.get("/console", (_req, res) => {
     // Buttons (two autosend + calculators with forms)
     "var starters = [",
     "  { label: '📰 Today\\'s Signal',  kind:'auto', text: 'Give me today\\'s CRE360 Signal in 3 bullets.' },",
-    "  { label: '📈 Rates Now',       kind:'auto', text: 'What are today\\'s CRE rates? (10Y, 5Y, SOFR, Prime, 2s10s spread). Include Source | Date (CT).' },",
+    "  { label: '📈 Rates Now',       kind:'live' },",
     "  { label: '🧮 DSCR',            kind:'form', id:'dscr' },",
     "  { label: '🧮 Debt Yield',      kind:'form', id:'dy' },",
     "  { label: '🏦 Size My Loan',    kind:'form', id:'size' },",
@@ -155,10 +244,31 @@ app.get("/console", (_req, res) => {
     "  }catch(e){ bot.textContent='(network error)'; }",
     "}",
 
-    // Wire chips (autosend + forms)
+    // Wire chips (auto + live + forms)
     "starters.forEach(function(sx){",
     "  var b=document.createElement('button'); b.className='chip'; b.textContent=sx.label;",
+
     "  if(sx.kind==='auto'){ b.onclick=function(){ ask(sx.text); }; }",
+
+    "  else if(sx.kind==='live'){",
+    "    b.onclick = async function(){",
+    "      var bot = bub('Fetching live rates...', 't');",
+    "      try{",
+    "        var r = await fetch(API + '/rates');",
+    "        if(!r.ok){ bot.textContent = '(rates service error)'; return; }",
+    "        var d = await r.json();",
+    "        var tre = d.treasuries || {};",
+    "        var txt = 'Rates Now (' + (d.as_of_ct || 'CT') + ')\\n' +",
+    "                  '10Y: ' + tre['10Y'] + '%, 5Y: ' + tre['5Y'] + '%, 2Y: ' + tre['2Y'] + '%; ' +",
+    "                  '2s10s: ' + tre.spread_2s10s + ' bps; SOFR: ' + (d.sofr!=null? d.sofr + '%' : 'n/a') + '\\n' +",
+    "                  'Sources: ' + (d.sources && d.sources.treasuries ? d.sources.treasuries : 'Treasury') + (d.sources && d.sources.sofr ? '; ' + d.sources.sofr : '');",
+    "        bot.textContent = txt;",
+    "        var prompt = 'Use these fresh rates to give a tight, operator-grade read: ' + txt + ' In 2 bullets: market take and underwriting implications.';",
+    "        ask(prompt);",
+    "      }catch(e){ bot.textContent='(network error on rates)'; }",
+    "    };",
+    "  }",
+
     "  else if(sx.kind==='form'){",
     "    if(sx.id==='dscr'){",
     "      b.onclick=function(){ miniForm('DSCR Calculator',[",
@@ -202,6 +312,7 @@ app.get("/console", (_req, res) => {
     "      ],function(v){ var p='Refi check: NOI='+v.noi+', value='+v.val+', rate='+v.rate+'%, amort='+v.am+' yrs, DSCR>= '+v.dscr+', LTV<= '+v.ltv+'%. Pass/fail with max loan numbers.'; ask(p); }); };",
     "    }",
     "  }",
+
     "  chips.appendChild(b);",
     "});",
 
