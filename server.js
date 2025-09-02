@@ -1,109 +1,4 @@
-// server.js — CRE360 Signal API (stable with disclaimer)
-const express = require("express");
-const cors = require("cors");
-const { OpenAI } = require("openai");
-const fetch = require("node-fetch");
-require("dotenv").config();
-
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-// ---------- OpenAI ----------
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-const SYSTEM_PROMPT = [
-  "You are CRE360 Signal — institutional, concise, decisive.",
-  "Prioritize extended-stay hotels, underwriting logic, development risk, and daily Signals.",
-  "Style: point-first answer, then 2-4 bullets with specifics. No fluff.",
-  "Never claim to be a broker; refer to CRE360 Advisory for representation."
-].join(" ");
-
-const CONTEXT = [
-  "Formulas: DSCR = NOI / Annual Debt Service; Debt Yield = NOI / Loan.",
-  "Cap math: Value = NOI / CapRate; CapRate = NOI / Value; NOI = Value * CapRate."
-].join(" ");
-
-// ---------- Live Rates ----------
-async function getTreasuryCurve() {
-  const url =
-    "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/accounting/od/" +
-    "daily_treasury_yield_curve?sort=-record_date&fields=record_date,bc_2year,bc_5year,bc_10year&page%5Bnumber%5D=1";
-  const r = await fetch(url);
-  const j = await r.json();
-  const row = j.data[0];
-  return {
-    date: row.record_date,
-    twoY: Number(row.bc_2year),
-    fiveY: Number(row.bc_5year),
-    tenY: Number(row.bc_10year),
-    spread_2s10s: Number(row.bc_2year) - Number(row.bc_10year),
-    source: "U.S. Treasury Daily Yield Curve"
-  };
-}
-
-async function getSOFR() {
-  try {
-    const r = await fetch("https://markets.newyorkfed.org/api/rates/secured/sofr/last/1.json");
-    const j = await r.json();
-    const item = (j.refRates || [])[0];
-    return { rate: Number(item.percentRate), date: item.effectiveDate, source: "NY Fed SOFR" };
-  } catch {
-    return { rate: null, date: null, source: "SOFR unavailable" };
-  }
-}
-
-function tsChicago(dateStr) {
-  const d = new Date(dateStr + "T12:00:00Z");
-  return d.toLocaleString("en-US", { timeZone: "America/Chicago" });
-}
-
-app.get("/rates", async (_req, res) => {
-  try {
-    const [treas, sofr] = await Promise.all([getTreasuryCurve(), getSOFR()]);
-    res.json({
-      as_of_ct: tsChicago(treas.date),
-      treasuries: { "2Y": treas.twoY, "5Y": treas.fiveY, "10Y": treas.tenY, spread_2s10s: treas.spread_2s10s },
-      sofr: sofr.rate,
-      sources: { treasuries: treas.source, sofr: sofr.source }
-    });
-  } catch (e) {
-    res.status(502).json({ error: "rates_fetch_failed", message: e.message });
-  }
-});
-
-// ---------- /chat ----------
-app.post("/chat", async (req, res) => {
-  try {
-    const text = String(req.body.message || "").slice(0, 8000);
-    if (!text) return res.status(400).json({ error: "Missing message" });
-
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.setHeader("Transfer-Encoding", "chunked");
-
-    const stream = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      stream: true,
-      temperature: 0.3,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "system", content: CONTEXT },
-        { role: "user", content: text }
-      ]
-    });
-
-    for await (const chunk of stream) {
-      const delta = chunk.choices?.[0]?.delta?.content || "";
-      if (delta) res.write(delta);
-    }
-    res.end();
-  } catch (e) {
-    console.error("Chat error:", e.message);
-    try { res.end(" (service error)"); } catch {}
-  }
-});
-
-// ---------- /console ----------
+// ---------- /console (2-col chips + 10 tools) ----------
 app.get("/console", (_req, res) => {
   const API = process.env.RENDER_EXTERNAL_URL || "https://cre360-signal-api.onrender.com";
   res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -115,12 +10,17 @@ app.get("/console", (_req, res) => {
     "<style>",
     ":root{--bg:#0B0B0B;--text:#FFFFFF;--gold:#BFA77A;--muted:rgba(255,255,255,.72);--line:rgba(255,255,255,.10)}",
     "html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:Inter,Arial,sans-serif}",
-    ".panel{display:flex;flex-direction:column;height:100vh;border-radius:16px;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.35);background:#0B0B0B}",
+    ".panel{display:flex;flex-direction:column;height:100vh;border-radius:16px;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.35);",
+    " background:#0B0B0B; background-image:",
+    "  linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,0) 30%),",
+    "  radial-gradient(800px 400px at 100% 0, rgba(191,167,122,.08), transparent 60%);",
+    " background-blend-mode:overlay}",
     ".head{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line)}",
     ".brand{font-weight:800;font-size:16px}",
     ".powered{font-size:12px;color:var(--muted)} .powered .gold{color:var(--gold)}",
     ".chips{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:0 16px 12px}",
     ".chip{border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--gold);font-weight:700;border-radius:999px;padding:8px 10px;font-size:12px;cursor:pointer;text-align:center}",
+    "@media (max-width:1024px){.chips{grid-template-columns:1fr}}",
     ".msgs{flex:1;overflow:auto;padding:10px 16px;display:flex;flex-direction:column;gap:10px}",
     ".b{padding:12px 14px;border-radius:12px;max-width:92%;line-height:1.35;font-size:14px;white-space:pre-wrap}",
     ".u{background:rgba(255,255,255,.10);align-self:flex-end}",
@@ -128,6 +28,11 @@ app.get("/console", (_req, res) => {
     ".input{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line)}",
     ".f{flex:1;background:rgba(255,255,255,.10);border:1px solid var(--line);color:#fff;border-radius:10px;padding:11px 12px;font-size:14px}",
     ".s{padding:10px 14px;border:none;border-radius:10px;background:var(--gold);color:#111;font-weight:800;cursor:pointer}",
+    ".formwrap{padding:12px 16px;border-top:1px solid var(--line);background:rgba(255,255,255,.02)}",
+    ".formrow{display:flex;gap:8px;align-items:center;margin-bottom:8px}",
+    ".label{width:160px;opacity:.8;font-size:13px}",
+    ".inp{flex:1;background:rgba(255,255,255,.10);border:1px solid var(--line);color:#fff;border-radius:8px;padding:8px}",
+    ".go{padding:8px 12px;border:none;border-radius:8px;background:var(--gold);color:#111;font-weight:700;cursor:pointer}",
     "</style></head><body>",
     "<div class='panel'>",
     "<div class='head'><div class='brand'>CRE360 Signal</div><div class='powered'>Powered by <span>ChatGPT</span> + <span class='gold'>CRE360.ai</span></div></div>",
@@ -148,29 +53,112 @@ app.get("/console", (_req, res) => {
     "  }catch(e){ bot.textContent='(network error)'; }",
     "}",
 
-    // Buttons
+    // 10 tools (2 auto + 1 live + 7 forms)
     "var starters=[",
-    " { label:'📰 Today\\'s Signal', kind:'auto', text:'Give me today\\'s CRE360 Signal in 3 bullets.' },",
-    " { label:'📈 Rates Now', kind:'live' }",
+    " { label:'📰 Today\\'s Signal',  kind:'auto', text:'Give me today\\'s CRE360 Signal in 3 bullets.' },",
+    " { label:'📈 Rates Now',         kind:'live' },",
+    " { label:'🧮 DSCR',              kind:'form', id:'dscr' },",
+    " { label:'🧮 Debt Yield',        kind:'form', id:'dy' },",
+    " { label:'🏦 Size My Loan',      kind:'form', id:'size' },",
+    " { label:'🎯 Break-Even Rate',   kind:'form', id:'ber' },",
+    " { label:'📐 Cap-Value-NOI',     kind:'form', id:'value' },",
+    " { label:'📐 Cap Rate',          kind:'form', id:'caprate' },",
+    " { label:'📊 LTV Check',         kind:'form', id:'ltv' },",
+    " { label:'💳 Payment P&I',       kind:'form', id:'pmt' }",
     "];",
 
+    "function miniForm(title, fields, onSubmit){",
+    "  var wrap=document.createElement('div'); wrap.className='formwrap';",
+    "  var h=document.createElement('div'); h.textContent=title; h.style.cssText='font-size:13px;opacity:.8;margin-bottom:8px'; wrap.appendChild(h);",
+    "  var inputs={};",
+    "  fields.forEach(function(fd){",
+    "    var row=document.createElement('div'); row.className='formrow';",
+    "    var lab=document.createElement('div'); lab.className='label'; lab.textContent=fd.label;",
+    "    var inp=document.createElement('input'); inp.className='inp'; inp.type='number'; inp.step='any'; inp.placeholder=fd.placeholder||'';",
+    "    inputs[fd.key]=inp; row.appendChild(lab); row.appendChild(inp); wrap.appendChild(row);",
+    "  });",
+    "  var go=document.createElement('button'); go.className='go'; go.textContent='Calculate';",
+    "  go.onclick=function(){ var vals={}; fields.forEach(function(fd){ vals[fd.key]=inputs[fd.key].value; }); onSubmit(vals); wrap.remove(); };",
+    "  wrap.appendChild(go);",
+    "  document.querySelector('.input').before(wrap);",
+    "}",
+
+    // Wire chips
     "starters.forEach(function(sx){",
     "  var b=document.createElement('button'); b.className='chip'; b.textContent=sx.label;",
+
+    // Auto
     "  if(sx.kind==='auto'){ b.onclick=function(){ ask(sx.text); }; }",
+
+    // Live rates
     "  else if(sx.kind==='live'){",
     "    b.onclick=async function(){",
     "      var bot=bub('Fetching live rates...','t');",
     "      try{ var r=await fetch(API+'/rates'); var d=await r.json();",
-    "        var txt='Rates Now ('+d.as_of_ct+') 10Y:'+d.treasuries['10Y']+'%, 5Y:'+d.treasuries['5Y']+'%, 2Y:'+d.treasuries['2Y']+'%; 2s10s:'+d.treasuries.spread_2s10s+'; SOFR:'+(d.sofr!=null?d.sofr+'%':'n/a');",
-    "        bot.textContent=txt; ask('Market take: '+txt);",
+    "        var tre=d.treasuries||{};",
+    "        var txt='Rates Now ('+(d.as_of_ct||'CT')+') 10Y:'+tre['10Y']+'%, 5Y:'+tre['5Y']+'%, 2Y:'+tre['2Y']+'%; 2s10s:'+tre.spread_2s10s+'; SOFR:'+(d.sofr!=null?d.sofr+'%':'n/a');",
+    "        bot.textContent=txt; ask('Use these rates for a tight operator take in 2 bullets: '+txt);",
     "      }catch(e){ bot.textContent='(rates error)'; }",
     "    };",
     "  }",
+
+    // Forms
+    "  else if(sx.kind==='form'){",
+    "    if(sx.id==='dscr'){",
+    "      b.onclick=function(){ miniForm('DSCR',[",
+    "        {key:'noi',label:'NOI',placeholder:'1200000'},",
+    "        {key:'ads',label:'Annual Debt Service',placeholder:'950000'}",
+    "      ],function(v){ ask('Calculate DSCR for NOI='+v.noi+' and Annual Debt Service='+v.ads+'. One line, then why it matters.'); }); };",
+    "    } else if(sx.id==='dy'){",
+    "      b.onclick=function(){ miniForm('Debt Yield',[",
+    "        {key:'noi',label:'NOI',placeholder:'1200000'},",
+    "        {key:'loan',label:'Loan',placeholder:'14000000'}",
+    "      ],function(v){ ask('Debt Yield if NOI='+v.noi+' and Loan='+v.loan+'?'); }); };",
+    "    } else if(sx.id==='size'){",
+    "      b.onclick=function(){ miniForm('Size My Loan',[",
+    "        {key:'noi',label:'NOI',placeholder:'1200000'},",
+    "        {key:'rate',label:'Rate %',placeholder:'7'},",
+    "        {key:'am',label:'Amort yrs',placeholder:'30'},",
+    "        {key:'dscr',label:'Min DSCR',placeholder:'1.25'},",
+    "        {key:'ltv',label:'Max LTV %',placeholder:'65'},",
+    "        {key:'val',label:'Value',placeholder:'20000000'}",
+    "      ],function(v){ ask('Max loan if NOI='+v.noi+', rate='+v.rate+'%, amort='+v.am+' years, DSCR>= '+v.dscr+', LTV<= '+v.ltv+'%, value='+v.val+'. Show binding constraint.'); }); };",
+    "    } else if(sx.id==='ber'){",
+    "      b.onclick=function(){ miniForm('Break-Even Rate',[",
+    "        {key:'noi',label:'NOI',placeholder:'1200000'},",
+    "        {key:'loan',label:'Loan',placeholder:'13000000'},",
+    "        {key:'am',label:'Amort yrs',placeholder:'30'},",
+    "        {key:'dscr',label:'Target DSCR',placeholder:'1.20'}",
+    "      ],function(v){ ask('At NOI='+v.noi+', loan='+v.loan+', amort='+v.am+' years, what interest rate makes DSCR='+v.dscr+'?'); }); };",
+    "    } else if(sx.id==='value'){",
+    "      b.onclick=function(){ miniForm('Cap-Value-NOI (Value)',[",
+    "        {key:'noi',label:'NOI',placeholder:'1400000'},",
+    "        {key:'cap',label:'Cap %',placeholder:'6.75'}",
+    "      ],function(v){ ask('Solve Value if NOI='+v.noi+' at '+v.cap+'% cap.'); }); };",
+    "    } else if(sx.id==='caprate'){",
+    "      b.onclick=function(){ miniForm('Cap Rate (NOI & Value)',[",
+    "        {key:'noi',label:'NOI',placeholder:'1400000'},",
+    "        {key:'val',label:'Value',placeholder:'21000000'}",
+    "      ],function(v){ ask('Solve Cap Rate if NOI='+v.noi+' and Value='+v.val+'. Return % to two decimals.'); }); };",
+    "    } else if(sx.id==='ltv'){",
+    "      b.onclick=function(){ miniForm('LTV Check',[",
+    "        {key:'val',label:'Value',placeholder:'20000000'},",
+    "        {key:'ltv',label:'LTV %',placeholder:'65'}",
+    "      ],function(v){ ask('Max loan by LTV if Value='+v.val+' and LTV='+v.ltv+'%. Return the loan amount.'); }); };",
+    "    } else if(sx.id==='pmt'){",
+    "      b.onclick=function(){ miniForm('Payment P&I',[",
+    "        {key:'loan',label:'Loan',placeholder:'13000000'},",
+    "        {key:'rate',label:'Rate %',placeholder:'7'},",
+    "        {key:'am',label:'Amort yrs',placeholder:'30'}",
+    "      ],function(v){ ask('Monthly P&I payment for loan='+v.loan+', rate='+v.rate+'%, amort='+v.am+' years. One line, then note the annual debt service.'); }); };",
+    "    }",
+    "  }",
+
     "  chips.appendChild(b);",
     "});",
 
-    // Greeting disclaimer
-    "bub('Disclaimer: I do not provide investment advice. I\\'ll do my best to help you analyze CRE360 signals, underwriting, and development risks.','t');",
+    // Disclaimer greeting (ASCII-safe)
+    "bub('Disclaimer: I do not provide investment advice. I will do my best to help you analyze CRE360 signals, underwriting, and development risks.','t');",
 
     "s.onclick=function(){ ask(f.value.trim()); };",
     "f.onkeydown=function(e){ if(e.key==='Enter') ask(f.value.trim()); };",
@@ -179,9 +167,3 @@ app.get("/console", (_req, res) => {
   ].join("");
   res.send(html);
 });
-
-// health
-app.get("/", (_req, res) => res.send("CRE360 Signal API running"));
-
-const PORT = process.env.PORT || 8787;
-app.listen(PORT, () => console.log("[CRE360] Listening on " + PORT));
