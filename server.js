@@ -1,6 +1,7 @@
-// STABLE /console (no Unicode, no external files)
+// STABLE /console route (plain ASCII, no fancy chars, no external files)
 app.get("/console", (_req, res) => {
   const API = process.env.RENDER_EXTERNAL_URL || "https://cre360-signal-api.onrender.com";
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
   const html = [
     "<!doctype html>",
     "<html><head><meta charset='utf-8'/>",
@@ -15,13 +16,13 @@ app.get("/console", (_req, res) => {
     ".brandL{font-weight:800;letter-spacing:.3px;font-size:16px}.dot{color:var(--gold);margin-right:8px}",
     ".powered{font-size:12px;color:var(--muted)} .powered b{color:var(--gold)}",
     ".sub{padding:8px 16px 10px;font-size:13px;color:var(--muted)}",
+    ".chips{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:0 16px 12px}",
+    ".chip{border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--text);border-radius:999px;padding:8px 10px;font-size:12px;cursor:pointer;text-align:center}",
+    "@media (max-width:1024px){.chips{grid-template-columns:1fr}}",
     ".msgs{flex:1;overflow:auto;padding:10px 16px;display:flex;flex-direction:column;gap:10px}",
     ".b{padding:12px 14px;border-radius:12px;max-width:92%;line-height:1.35;font-size:14px;white-space:pre-wrap}",
     ".u{background:rgba(255,255,255,.10);align-self:flex-end}",
     ".t{background:rgba(255,255,255,.06);border:1px solid var(--line);align-self:flex-start}",
-    ".chips{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:0 16px 12px}",
-    ".chip{border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--text);border-radius:999px;padding:8px 10px;font-size:12px;cursor:pointer;text-align:center}",
-    "@media (max-width:1024px){.chips{grid-template-columns:1fr}}",
     ".input{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line);background:rgba(255,255,255,.02)}",
     ".f{flex:1;background:rgba(255,255,255,.10);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:11px 12px;font-size:14px}",
     ".s{padding:10px 14px;border:none;border-radius:10px;background:var(--gold);color:#111;font-weight:800;cursor:pointer}",
@@ -30,11 +31,11 @@ app.get("/console", (_req, res) => {
     "<div class='panel'>",
     "<div class='head'><div class='brandL'><span class='dot'>&#9679;</span>CRE360 Signal</div>",
     "<div class='powered'>Powered by <b>ChatGPT + CRE360.ai</b></div></div>",
-    "<div class='sub'>Operator-grade market intelligence — ask sharper questions.</div>",
+    "<div class='sub'>Operator-grade market intelligence - ask sharper questions.</div>",
     "<div id='chips' class='chips'></div>",
     "<div id='m' class='msgs'></div>",
     "<div class='input'><input id='f' class='f' placeholder='Ask the Signal...'><button id='s' class='s'>Send</button></div>",
-    "<div class='foot'>&#169; CRE360 — Institutional, decisive, no fluff.</div>",
+    "<div class='foot'>&#169; CRE360 - Institutional, decisive, no fluff.</div>",
     "</div>",
     "<script>",
     "(function(){",
@@ -48,14 +49,14 @@ app.get("/console", (_req, res) => {
     "];",
     "starters.forEach(function(s){ var b=document.createElement('button'); b.className='chip'; b.textContent=s.label; b.onclick=function(){ f.value=s.text; f.focus(); }; chips.appendChild(b); });",
     "function bub(t,who){ var d=document.createElement('div'); d.className='b '+who; d.textContent=t; m.appendChild(d); m.scrollTop=m.scrollHeight; return d; }",
-    "async function ask(q){ if(!q) return; bub(q,'u'); f.value=''; var bot=bub('...','t');",
+    "async function ask(q){ if(!q) return; bub(q,'u'); f.value=''; var bot=bub('...', 't');",
     " try{ var r=await fetch(API+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:q})});",
     " if(!r.body){ bot.textContent='(service error)'; return; } var rd=r.body.getReader(), dec=new TextDecoder(); bot.textContent='';",
     " while(true){ var x=await rd.read(); if(x.done) break; bot.textContent+=dec.decode(x.value,{stream:true}); m.scrollTop=m.scrollHeight; }",
     " }catch(e){ bot.textContent='(network error)'; } }",
     "s.onclick=function(){ ask(f.value.trim()); };",
     "f.onkeydown=function(e){ if(e.key==='Enter') ask(f.value.trim()); };",
-    "bub('Here\\'s the deal — ask about underwriting, extended-stay, or today\\'s Signal.','t');",
+    "bub('Here is the deal - ask about underwriting, extended-stay, or today\\'s Signal.', 't');",
     "})();",
     "</script>",
     "</body></html>"
