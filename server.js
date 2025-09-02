@@ -1,24 +1,35 @@
-// server.js — CRE360 Signal API (minimal, ASCII-safe)
+// server.js — CRE360 Signal API (stable, ASCII-only)
 const express = require("express");
 const cors = require("cors");
 const { OpenAI } = require("openai");
 require("dotenv").config();
 
 const app = express();
-app.use(cors());                // lock later if you want
+app.use(cors());            // lock later if you want
 app.use(express.json());
 
+// ---------- OpenAI ----------
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// --- Chat endpoint ---
-const SYSTEM_PROMPT =
-  "You are the CRE360 Assistant — institutional, concise, decisive. " +
-  "Focus on extended-stay hotels, underwriting logic, development risk, and daily Signals. " +
-  "Lead with the point, then 2–4 supporting bullets.";
+// Voice + quick context
+const SYSTEM_PROMPT = [
+  "You are CRE360 Signal — institutional, concise, decisive.",
+  "Prioritize extended-stay hotels, underwriting logic, development risk, and daily Signals.",
+  "Style: point-first answer, then 2-4 bullets with specifics. No fluff.",
+  "Never claim to be a broker; refer to CRE360 Advisory for representation."
+].join(" ");
 
+const CONTEXT = [
+  "Extended-stay: resilient occupancy, lean staffing, lower turnover costs, weekly LOS economics.",
+  "Deal screening: sponsor track record, capital stack clarity, brand or flag fit, site feasibility, exit paths.",
+  "Development risk: entitlements, GC capacity and schedule realism, lender covenants, contingency sufficiency.",
+  "Operator lens: cash conversion cycle, FF&E and PIP exposure, ramp realism, RevPAR vs comp set."
+].join(" ");
+
+// ---------- /chat ----------
 app.post("/chat", async (req, res) => {
   try {
-    const text = String(req.body && req.body.message || "").slice(0, 8000);
+    const text = String((req.body && req.body.message) || "").slice(0, 8000);
     if (!text) return res.status(400).json({ error: "Missing message" });
 
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
@@ -30,51 +41,66 @@ app.post("/chat", async (req, res) => {
       temperature: 0.4,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: CONTEXT },
         { role: "user", content: text }
       ]
     });
 
     for await (const chunk of stream) {
-      const delta = (chunk.choices && chunk.choices[0] && chunk.choices[0].delta && chunk.choices[0].delta.content) || "";
+      const delta =
+        (chunk.choices &&
+          chunk.choices[0] &&
+          chunk.choices[0].delta &&
+          chunk.choices[0].delta.content) ||
+        "";
       if (delta) res.write(delta);
     }
     res.end();
   } catch (e) {
-    console.error("Chat error:", e && e.message || e);
+    console.error("Chat error:", e && e.message ? e.message : e);
     try { res.end(" (service error)"); } catch {}
   }
 });
 
-// --- Inline /console page (no external JS, no unicode traps) ---
+// ---------- /console (inline UI, no external JS) ----------
 app.get("/console", (_req, res) => {
   const API = process.env.RENDER_EXTERNAL_URL || "https://cre360-signal-api.onrender.com";
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
   const html = [
     "<!doctype html>",
     "<html><head><meta charset='utf-8'/>",
     "<meta name='viewport' content='width=device-width, initial-scale=1'/>",
     "<title>CRE360 Signal Console</title>",
     "<style>",
-    "html,body{margin:0;height:100%;background:#0B0B0B;color:#FFFFFF;font-family:Inter,Arial,sans-serif}",
-    ".panel{display:flex;flex-direction:column;height:100vh;border-radius:16px;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.35)}",
-    ".head{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.1);",
-    "background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02))}",
+    ":root{--bg:#0B0B0B;--text:#FFFFFF;--gold:#BFA77A;--muted:rgba(255,255,255,.72);--line:rgba(255,255,255,.10)}",
+    "html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:Inter,Arial,sans-serif}",
+    ".panel{display:flex;flex-direction:column;height:100vh;border-radius:16px;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.35);",
+    " background:#0B0B0B; background-image:",
+    "  linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,0) 30%),",
+    "  radial-gradient(800px 400px at 100% 0, rgba(191,167,122,.08), transparent 60%);",
+    " background-blend-mode:overlay}",
+    ".head{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line);",
+    " background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02))}",
     ".brand{font-weight:800;letter-spacing:.3px;font-size:16px}",
-    ".powered{font-size:12px;color:rgba(255,255,255,.72)} .powered b{color:#BFA77A}",
-    ".sub{padding:8px 16px 10px;font-size:13px;color:rgba(255,255,255,.72)}",
+    ".powered{font-size:12px;color:var(--muted)} .powered .gold{color:var(--gold)}",
+    ".sub{padding:8px 16px 10px;font-size:13px;color:var(--muted)}",
     ".chips{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:0 16px 12px}",
-    ".chip{border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.06);color:#fff;border-radius:999px;padding:8px 10px;font-size:12px;cursor:pointer;text-align:center}",
+    ".chip{border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--text);border-radius:999px;padding:8px 10px;font-size:12px;cursor:pointer;text-align:center}",
     "@media (max-width:1024px){.chips{grid-template-columns:1fr}}",
     ".msgs{flex:1;overflow:auto;padding:10px 16px;display:flex;flex-direction:column;gap:10px}",
     ".b{padding:12px 14px;border-radius:12px;max-width:92%;line-height:1.35;font-size:14px;white-space:pre-wrap}",
     ".u{background:rgba(255,255,255,.10);align-self:flex-end}",
-    ".t{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1)}",
-    ".input{display:flex;gap:8px;padding:12px;border-top:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.02)}",
-    ".f{flex:1;background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.1);color:#fff;border-radius:10px;padding:11px 12px;font-size:14px}",
-    ".s{padding:10px 14px;border:none;border-radius:10px;background:#BFA77A;color:#111;font-weight:800;cursor:pointer}",
-    ".foot{padding:6px 12px;font-size:11px;text-align:center;color:rgba(255,255,255,.72);border-top:1px solid rgba(255,255,255,.1)}",
+    ".t{background:rgba(255,255,255,.06);border:1px solid var(--line);align-self:flex-start}",
+    ".input{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line);background:rgba(255,255,255,.02)}",
+    ".f{flex:1;background:rgba(255,255,255,.10);border:1px solid var(--line);color:#fff;border-radius:10px;padding:11px 12px;font-size:14px}",
+    ".s{padding:10px 14px;border:none;border-radius:10px;background:var(--gold);color:#111;font-weight:800;cursor:pointer}",
+    ".foot{padding:6px 12px;font-size:11px;text-align:center;color:var(--muted);border-top:1px solid var(--line)}",
     "</style></head><body>",
     "<div class='panel'>",
-    "<div class='head'><div class='brand'>CRE360 Signal</div><div class='powered'>Powered by <b>ChatGPT + CRE360.ai</b></div></div>",
+    "<div class='head'>",
+    "<div class='brand'>CRE360 Signal</div>",
+    "<div class='powered'>Powered by <span>ChatGPT</span> + <span class='gold'>CRE360.ai</span></div>",
+    "</div>",
     "<div class='sub'>Operator-grade market intelligence - ask sharper questions.</div>",
     "<div id='chips' class='chips'></div>",
     "<div id='m' class='msgs'></div>",
@@ -84,15 +110,13 @@ app.get("/console", (_req, res) => {
     "<script>",
     "(function(){",
     "var API='" + API + "';",
-    "var m=document.getElementById('m'), f=document.getElementById('f'), s=document.getElementById('s');",
-    "var chips=document.getElementById('chips');",
-   var starters = [
-  { label: 'Today\'s Signal', text: 'Give me today\'s CRE360 Signal in 3 bullets.' },
-  { label: 'Market Pulse',    text: 'Give a 2-bullet market pulse for CRE this week.' },
-  { label: 'Deal Screener',   text: 'Screen a CRE deal: what 3 red flags should I check first?' },
-  { label: 'Dev Risk Radar',  text: 'List the top 3 execution risks on a new hotel development.' }
-];
-
+    "var m=document.getElementById('m'), f=document.getElementById('f'), s=document.getElementById('s'), chips=document.getElementById('chips');",
+    "var starters=[",
+    " { label:'Today\\'s Signal', text:'Give me today\\'s CRE360 Signal in 3 bullets.' },",
+    " { label:'Market Pulse',    text:'Give a 2-bullet market pulse for CRE this week.' },",
+    " { label:'Deal Screener',   text:'Screen a CRE deal: what 3 red flags should I check first?' },",
+    " { label:'Dev Risk Radar',  text:'List the top 3 execution risks on a new hotel development.' }",
+    "];",
     "starters.forEach(function(sx){ var b=document.createElement('button'); b.className='chip'; b.textContent=sx.label; b.onclick=function(){ f.value=sx.text; f.focus(); }; chips.appendChild(b); });",
     "function bub(t,who){ var d=document.createElement('div'); d.className='b '+who; d.textContent=t; m.appendChild(d); m.scrollTop=m.scrollHeight; return d; }",
     "async function ask(q){ if(!q) return; bub(q,'u'); f.value=''; var bot=bub('...', 't');",
