@@ -1,48 +1,32 @@
-/* CRE360 loader — clean copy (client-only, SSR-safe, NL prompts) */
+/* CRE360 Assistant loader — clean full copy */
 (function () {
-  // ---------- 0) SSR guard ----------
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
-
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
+  } else { init(); }
 
   function init() {
-    // ---------- 1) Find the config script tag safely ----------
-    var cfgScript =
-      (document.currentScript && document.currentScript.getAttribute && document.currentScript.getAttribute('data-endpoint') && document.currentScript) ||
-      document.querySelector('script[data-api-base][data-endpoint]') ||
-      null;
+    // --- Config from script tag ---
+    var cfg = document.querySelector('script[data-endpoint]') || document.currentScript;
+    var API_BASE  = (cfg && cfg.getAttribute('data-api-base')) || '';
+    var ENDPOINT  = (cfg && cfg.getAttribute('data-endpoint')) || '/chat';
+    var BOT_NAME  = (cfg && cfg.getAttribute('data-bot-name')) || 'CRE360 Assistant';
+    var C_PRIMARY = (cfg && cfg.getAttribute('data-primary')) || '#BFA77A';
+    var C_SURFACE = (cfg && cfg.getAttribute('data-surface')) || '#0B0B0B';
+    var C_TEXT    = (cfg && cfg.getAttribute('data-text')) || '#FFFFFF';
+    var C_ACCENT  = (cfg && cfg.getAttribute('data-accent')) || '#D9CBA2';
+    if (!API_BASE) API_BASE = window.location.origin;
 
-    if (!cfgScript) {
-      console.error('[CRE360] Config script with data-api-base & data-endpoint not found.');
-      return;
-    }
-
-    var API_BASE  = cfgScript.getAttribute('data-api-base') || '';
-    var ENDPOINT  = cfgScript.getAttribute('data-endpoint') || '/chat';
-    var BOT_NAME  = cfgScript.getAttribute('data-bot-name') || 'CRE360 Assistant';
-    var C_PRIMARY = cfgScript.getAttribute('data-primary') || '#BFA77A';
-    var C_SURFACE = cfgScript.getAttribute('data-surface') || '#0B0B0B';
-    var C_TEXT    = cfgScript.getAttribute('data-text') || '#FFFFFF';
-    var C_ACCENT  = cfgScript.getAttribute('data-accent') || '#D9CBA2';
-
-    if (!API_BASE) {
-      console.error('[CRE360] data-api-base is empty — set it on the script tag.');
-      return;
-    }
-
-    // ---------- 2) Mount host ----------
+    // --- Host mount ---
     var host = document.createElement('div');
-    Object.assign(host.style, { position:'fixed', bottom:'24px', right:'24px', zIndex: 999999 });
+    Object.assign(host.style,{position:'fixed',bottom:'24px',right:'24px',zIndex:999999});
     document.body.appendChild(host);
-    var root = host.attachShadow ? host.attachShadow({ mode: 'open' }) : host;
+    var root = host.attachShadow({mode:'open'});
 
-    var style = document.createElement('style');
-    style.textContent = `
-      :host { all: initial; }
+    // --- Styles ---
+    var style=document.createElement('style');
+    style.textContent=`
+      :host{all:initial}
       *,*::before,*::after{box-sizing:border-box;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
       .btn{cursor:pointer;border:none}
       .fab{width:56px;height:56px;border-radius:50%;background:${C_PRIMARY};color:#111;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 30px rgba(0,0,0,.3);font-weight:700}
@@ -67,93 +51,61 @@
     `;
     root.appendChild(style);
 
-    var fab = document.createElement('button');
-    fab.className = 'btn fab';
-    fab.setAttribute('aria-label', 'Open CRE360 chat');
-    fab.textContent = '✦';
+    // --- Structure ---
+    var fab=document.createElement('button');fab.className='btn fab';fab.textContent='✦';
+    var panel=document.createElement('section');panel.className='panel';
+    var header=document.createElement('div');header.className='header';
+    header.innerHTML=`<div class="badge">C</div><div><div class="title">${BOT_NAME}</div><div class="subtitle">Here’s the deal — ask me something specific.</div></div>`;
+    var starterWrap=document.createElement('div');starterWrap.className='starter';
+    var typing=document.createElement('div');typing.className='typing';typing.style.display='none';typing.textContent='CRE360 Assistant is typing…';
+    var msgs=document.createElement('div');msgs.className='messages';
+    var inputBar=document.createElement('div');inputBar.className='inputBar';
+    var input=document.createElement('input');input.className='field';input.placeholder='Type your question…';
+    var send=document.createElement('button');send.className='btn send';send.textContent='Send';
+    inputBar.appendChild(input);inputBar.appendChild(send);
+    var footer=document.createElement('div');footer.className='footer';
+    footer.innerHTML=`Powered by <a class="link" href="https://cre360.ai" target="_blank">CRE360</a>`;
+    panel.appendChild(header);panel.appendChild(starterWrap);panel.appendChild(typing);
+    panel.appendChild(msgs);panel.appendChild(inputBar);panel.appendChild(footer);
+    root.appendChild(fab);root.appendChild(panel);
 
-    var panel = document.createElement('section'); panel.className = 'panel';
-    var header = document.createElement('div'); header.className = 'header';
-    header.innerHTML = `<div class="badge">C</div><div><div class="title">${BOT_NAME}</div><div class="subtitle">Here’s the deal — ask me something specific.</div></div>`;
+    fab.addEventListener('click',()=>panel.classList.toggle('open'));
 
-    var starterWrap = document.createElement('div'); starterWrap.className = 'starter';
-    var typing = document.createElement('div'); typing.className='typing'; typing.style.display='none'; typing.textContent='CRE360 Assistant is typing…';
-    var msgs = document.createElement('div'); msgs.className='messages';
-
-    var inputBar = document.createElement('div'); inputBar.className='inputBar';
-    var input = document.createElement('input'); input.className='field'; input.placeholder='Type your question…';
-    var send  = document.createElement('button'); send.className='btn send'; send.textContent='Send';
-    inputBar.appendChild(input); inputBar.appendChild(send);
-
-    var footer = document.createElement('div'); footer.className='footer';
-    footer.innerHTML = `Powered by <a class="link" href="https://cre360.ai" target="_blank" rel="noopener">CRE360</a>`;
-
-    panel.appendChild(header); panel.appendChild(starterWrap); panel.appendChild(typing);
-    panel.appendChild(msgs); panel.appendChild(inputBar); panel.appendChild(footer);
-    root.appendChild(fab); root.appendChild(panel);
-
-    fab.addEventListener('click', function(){ panel.classList.toggle('open'); });
-
-    // ---------- 3) Helpers ----------
-    function bubble(text, who){
-      var el = document.createElement('div');
-      el.className = 'bubble ' + (who === 'user' ? 'user' : 'bot');
-      el.textContent = text;
-      msgs.appendChild(el);
-      msgs.scrollTop = msgs.scrollHeight;
-      return el;
-    }
-    function setTyping(v){ typing.style.display = v ? 'block' : 'none'; }
-
+    // --- Helpers ---
+    function bubble(text,who){var el=document.createElement('div');el.className='bubble '+(who==='user'?'user':'bot');el.textContent=text;msgs.appendChild(el);msgs.scrollTop=msgs.scrollHeight;return el;}
+    function setTyping(v){typing.style.display=v?'block':'none';}
     function sendToBackend(question){
-      return fetch(API_BASE + ENDPOINT, {
-        method:'POST',
-        headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify({ message: question })
-      });
+      return fetch(API_BASE+ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:question})});
     }
-
-    function streamResponse(resp, botEl){
-      if(!resp || !resp.ok || !resp.body){ botEl.textContent='Sorry—service is busy. Try again.'; return Promise.resolve(); }
-      var reader = resp.body.getReader(); var decoder = new TextDecoder();
-      function pump(){ return reader.read().then(function(r){ if(r.done) return; botEl.textContent += decoder.decode(r.value, {stream:true}); msgs.scrollTop=msgs.scrollHeight; return pump(); }); }
+    function streamResponse(resp,botEl){
+      if(!resp||!resp.ok||!resp.body){botEl.textContent='Sorry—service is busy.';return;}
+      var r=resp.body.getReader();var d=new TextDecoder();
+      function pump(){return r.read().then(({value,done})=>{if(done)return;botEl.textContent+=d.decode(value,{stream:true});msgs.scrollTop=msgs.scrollHeight;return pump();});}
       return pump();
     }
-
     function ask(q){
-      if(!q) return;
-      bubble(q,'user'); input.value=''; setTyping(true);
-      var botEl=bubble('','bot');
-      sendToBackend(q)
-        .then(function(r){ return streamResponse(r, botEl); })
-        .catch(function(){ botEl.textContent='Network error. Please retry.'; })
-        .finally(function(){ setTyping(false); });
+      if(!q)return;bubble(q,'user');input.value='';setTyping(true);var botEl=bubble('','bot');
+      sendToBackend(q).then(r=>streamResponse(r,botEl)).catch(()=>botEl.textContent='Network error.').finally(()=>setTyping(false));
     }
+    send.addEventListener('click',()=>ask(input.value.trim()));
+    input.addEventListener('keydown',(e)=>{if(e.key==='Enter')ask(input.value.trim());});
 
-    send.addEventListener('click', function(){ ask(input.value.trim()); });
-    input.addEventListener('keydown', function(e){ if(e.key==='Enter') ask(input.value.trim()); });
-
-    // ---------- 4) Quick buttons (8 NL prompts) ----------
-    var quickButtons = [
-      { label:'📰 Today’s Signal',    text:"Give me today’s CRE360 Signal in 3 tight bullets with sources and dates." },
-      { label:'📈 Rates Now',         text:"What are key CRE rates right now (10Y UST, 5Y UST, SOFR, Prime, 2s10s spread)? Include Source | Date (CT)." },
-      { label:'🧮 DSCR',              text:"Calculate DSCR for NOI=1,200,000 and Annual Debt Service=950,000. One line, then Why it matters." },
-      { label:'🧮 Debt Yield',        text:"Compute Debt Yield for NOI=1,200,000 and Loan Amount=14,000,000. One line, then lender context." },
-      { label:'🏦 Size My Loan',      text:"Max loan if NOI=1,200,000, rate=7%, amort=30 years, with constraints DSCR≥1.25 and LTV≤65% and value=20,000,000. Show binding constraint." },
-      { label:'🎯 Break-Even Rate',   text:"At NOI=1,200,000, loan=13,000,000, amort=30 years, what interest rate gives DSCR=1.20? One line result." },
-      { label:'📐 Cap↔Value↔NOI',     text:"Solve Value if NOI=1,400,000 at 6.75% cap. One line result." },
-      { label:'🔁 Refi Check',        text:"Refi check: NOI=1,300,000, value=21,000,000, rate=7.25%, amort=30 yrs, DSCR≥1.25, LTV≤65%. Pass/fail with max-allowable loan numbers." }
-    ];
-
-    quickButtons.forEach(function(btn){
-      var chip = document.createElement('button');
-      chip.className = 'chip btn';
-      chip.textContent = btn.label;
-      chip.addEventListener('click', function(){ ask(btn.text); });
-      starterWrap.appendChild(chip);
+    // --- 8 Quick Buttons ---
+    [
+      {label:'📰 Today’s Signal',text:"Give me today’s CRE360 Signal in 3 bullets."},
+      {label:'📈 Rates Now',text:"What are today’s CRE rates? (10Y, 5Y, SOFR, Prime, 2s10s spread)"},
+      {label:'🧮 DSCR',text:"Calculate DSCR for NOI=1,200,000 and Debt Service=950,000."},
+      {label:'🧮 Debt Yield',text:"Debt Yield if NOI=1,200,000 and Loan=14,000,000?"},
+      {label:'🏦 Size My Loan',text:"Max loan if NOI=1,200,000, rate=7%, amort=30y, DSCR≥1.25, LTV≤65%, value=20M."},
+      {label:'🎯 Break-Even Rate',text:"At NOI=1,200,000, Loan=13,000,000, 30y amort, what rate = DSCR 1.20?"},
+      {label:'📐 Cap↔Value↔NOI',text:"Value if NOI=1,400,000 at 6.75% cap rate."},
+      {label:'🔁 Refi Check',text:"Refi check: NOI=1,300,000, Value=21M, rate=7.25%, 30y, DSCR≥1.25, LTV≤65%."}
+    ].forEach(btn=>{
+      var chip=document.createElement('button');chip.className='chip btn';chip.textContent=btn.label;
+      chip.addEventListener('click',()=>ask(btn.text));starterWrap.appendChild(chip);
     });
 
-    // ---------- 5) Welcome ----------
-    bubble('Welcome to ' + BOT_NAME + '. Ask about underwriting, extended-stay strategy, or today’s Signal.');
+    // --- Welcome bubble ---
+    bubble(`Welcome to ${BOT_NAME}. Ask about underwriting, extended-stay strategy, or today’s Signal.`);
   }
 })();
