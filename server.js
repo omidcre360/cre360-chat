@@ -1,11 +1,11 @@
-// server.js — CRE360 Signal API (stable, ASCII-only)
+// server.js — CRE360 Signal API (stable, ASCII-safe)
 const express = require("express");
 const cors = require("cors");
 const { OpenAI } = require("openai");
 require("dotenv").config();
 
 const app = express();
-app.use(cors());            // lock later if you want
+app.use(cors());            // lock to your domain later if you want
 app.use(express.json());
 
 // ---------- OpenAI ----------
@@ -62,7 +62,7 @@ app.post("/chat", async (req, res) => {
   }
 });
 
-// ---------- /console (inline UI, no external JS) ----------
+// ---------- /console (inline UI, no external files) ----------
 app.get("/console", (_req, res) => {
   const API = process.env.RENDER_EXTERNAL_URL || "https://cre360-signal-api.onrender.com";
   res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -111,11 +111,15 @@ app.get("/console", (_req, res) => {
     "(function(){",
     "var API='" + API + "';",
     "var m=document.getElementById('m'), f=document.getElementById('f'), s=document.getElementById('s'), chips=document.getElementById('chips');",
-    "var starters=[",
-    " { label:'Today\\'s Signal', text:'Give me today\\'s CRE360 Signal in 3 bullets.' },",
-    " { label:'Market Pulse',    text:'Give a 2-bullet market pulse for CRE this week.' },",
-    " { label:'Deal Screener',   text:'Screen a CRE deal: what 3 red flags should I check first?' },",
-    " { label:'Dev Risk Radar',  text:'List the top 3 execution risks on a new hotel development.' }",
+    "var starters = [",
+    "  { label: '📰 Today\\'s Signal',  text: 'Give me today\\'s CRE360 Signal in 3 bullets.' },",
+    "  { label: '📈 Rates Now',       text: 'What are today\\'s CRE rates? (10Y, 5Y, SOFR, Prime, 2s10s spread). Include Source | Date (CT).' },",
+    "  { label: '🧮 DSCR',            text: 'Calculate DSCR for NOI=1,200,000 and Annual Debt Service=950,000. One line, then Why it matters.' },",
+    "  { label: '🧮 Debt Yield',      text: 'Debt Yield if NOI=1,200,000 and Loan=14,000,000?' },",
+    "  { label: '🏦 Size My Loan',    text: 'Max loan if NOI=1,200,000, rate=7%, amort=30 years, DSCR>=1.25, LTV<=65%, value=20,000,000. Show binding constraint.' },",
+    "  { label: '🎯 Break-Even Rate', text: 'At NOI=1,200,000, loan=13,000,000, amort=30 years, what interest rate makes DSCR=1.20?' },",
+    "  { label: '📐 Cap-Value-NOI',   text: 'Solve Value if NOI=1,400,000 at 6.75% cap.' },",
+    "  { label: '🔁 Refi Check',      text: 'Refi check: NOI=1,300,000, value=21,000,000, rate=7.25%, amort=30 yrs, DSCR>=1.25, LTV<=65%. Pass/fail with max loan numbers.' }",
     "];",
     "starters.forEach(function(sx){ var b=document.createElement('button'); b.className='chip'; b.textContent=sx.label; b.onclick=function(){ f.value=sx.text; f.focus(); }; chips.appendChild(b); });",
     "function bub(t,who){ var d=document.createElement('div'); d.className='b '+who; d.textContent=t; m.appendChild(d); m.scrollTop=m.scrollHeight; return d; }",
