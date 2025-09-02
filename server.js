@@ -7,7 +7,11 @@ require("dotenv").config();
 const app = express();
 
 // Middleware
-app.use(cors());
+const corsOptions = {
+  origin: ["https://cre360.ai", "https://www.cre360.ai"],
+  credentials: false
+};
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // OpenAI client
