@@ -1,38 +1,29 @@
-// server.js — CRE360 Signal API (forms + live chat, ASCII-safe)
+// server.js — CRE360 Signal API (stable)
 const express = require("express");
 const cors = require("cors");
 const { OpenAI } = require("openai");
 require("dotenv").config();
 
 const app = express();
-
-// CORS (loosened for now; lock to your domain later)
-// const corsOptions = { origin: ["https://cre360.ai","https://www.cre360.ai"] };
-// app.use(cors(corsOptions));
-app.use(cors());
+app.use(cors());            // lock later if you want: const corsOptions={origin:["https://cre360.ai","https://www.cre360.ai"]}; app.use(cors(corsOptions));
 app.use(express.json());
 
 // ---------- OpenAI ----------
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Voice + quick context
+// Voice + context
 const SYSTEM_PROMPT = [
   "You are CRE360 Signal — institutional, concise, decisive.",
   "Prioritize extended-stay hotels, underwriting logic, development risk, and daily Signals.",
   "Style: point-first answer, then 2-4 bullets with specifics. No fluff.",
   "Never claim to be a broker; refer to CRE360 Advisory for representation.",
-  "If the user asks for calculations, show the key number first, then a short why-it-matters note."
+  "If calculating, show the key number first, then why it matters."
 ].join(" ");
 
 const CONTEXT = [
-  "Extended-stay: resilient occupancy, lean staffing, lower turnover costs, weekly LOS economics.",
-  "Deal screening: sponsor track record, capital stack clarity, brand or flag fit, site feasibility, exit paths.",
-  "Development risk: entitlements, GC capacity and schedule realism, lender covenants, contingency sufficiency.",
-  "Operator lens: cash conversion cycle, FF&E and PIP exposure, ramp realism, RevPAR vs comp set.",
-  "When asked to calculate DSCR: DSCR = NOI / Annual Debt Service.",
-  "When asked debt yield: Debt Yield = NOI / Loan Amount.",
-  "When asked cap rate math: Value = NOI / CapRate; CapRate = NOI / Value; NOI = Value * CapRate.",
-  "When asked amortized payment logic: Use standard mortgage payment formula; if constraints conflict, state binding constraint."
+  "Formulas: DSCR = NOI / Annual Debt Service; Debt Yield = NOI / Loan.",
+  "Cap math: Value = NOI / CapRate; CapRate = NOI / Value; NOI = Value * CapRate.",
+  "Amortized payment: use standard mortgage payment formula; if constraints conflict, state binding constraint."
 ].join(" ");
 
 // ---------- /chat ----------
@@ -60,8 +51,7 @@ app.post("/chat", async (req, res) => {
         (chunk.choices &&
           chunk.choices[0] &&
           chunk.choices[0].delta &&
-          chunk.choices[0].delta.content) ||
-        "";
+          chunk.choices[0].delta.content) || "";
       if (delta) res.write(delta);
     }
     res.end();
@@ -71,7 +61,7 @@ app.post("/chat", async (req, res) => {
   }
 });
 
-// ---------- /console (inline UI, mini-forms + live stream) ----------
+// ---------- /console (inline UI; gold bold chips; mini-forms) ----------
 app.get("/console", (_req, res) => {
   const API = process.env.RENDER_EXTERNAL_URL || "https://cre360-signal-api.onrender.com";
   res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -94,7 +84,7 @@ app.get("/console", (_req, res) => {
     ".powered{font-size:12px;color:var(--muted)} .powered .gold{color:var(--gold)}",
     ".sub{padding:8px 16px 10px;font-size:13px;color:var(--muted)}",
     ".chips{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:0 16px 12px}",
-    ".chip{border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--text);border-radius:999px;padding:8px 10px;font-size:12px;cursor:pointer;text-align:center}",
+    ".chip{border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--gold);font-weight:700;border-radius:999px;padding:8px 10px;font-size:12px;cursor:pointer;text-align:center}",
     "@media (max-width:1024px){.chips{grid-template-columns:1fr}}",
     ".msgs{flex:1;overflow:auto;padding:10px 16px;display:flex;flex-direction:column;gap:10px}",
     ".b{padding:12px 14px;border-radius:12px;max-width:92%;line-height:1.35;font-size:14px;white-space:pre-wrap}",
@@ -126,7 +116,7 @@ app.get("/console", (_req, res) => {
     "var API='" + API + "';",
     "var m=document.getElementById('m'), f=document.getElementById('f'), s=document.getElementById('s'), chips=document.getElementById('chips');",
 
-    // Starter buttons (your list)
+    // Buttons (two autosend + calculators with forms)
     "var starters = [",
     "  { label: '📰 Today\\'s Signal',  kind:'auto', text: 'Give me today\\'s CRE360 Signal in 3 bullets.' },",
     "  { label: '📈 Rates Now',       kind:'auto', text: 'What are today\\'s CRE rates? (10Y, 5Y, SOFR, Prime, 2s10s spread). Include Source | Date (CT).' },",
@@ -155,7 +145,7 @@ app.get("/console", (_req, res) => {
     "  document.querySelector('.input').before(wrap);",
     "}",
 
-    // Send a chat message
+    // Chat helpers
     "function bub(t,who){ var d=document.createElement('div'); d.className='b '+who; d.textContent=t; m.appendChild(d); m.scrollTop=m.scrollHeight; return d; }",
     "async function ask(q){ if(!q) return; bub(q,'u'); f.value=''; var bot=bub('...','t');",
     "  try{ var r=await fetch(API+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:q})});",
@@ -165,28 +155,22 @@ app.get("/console", (_req, res) => {
     "  }catch(e){ bot.textContent='(network error)'; }",
     "}",
 
-    // Wire chips
+    // Wire chips (autosend + forms)
     "starters.forEach(function(sx){",
     "  var b=document.createElement('button'); b.className='chip'; b.textContent=sx.label;",
-
-    // Auto chips
     "  if(sx.kind==='auto'){ b.onclick=function(){ ask(sx.text); }; }",
-
-    // Form chips
     "  else if(sx.kind==='form'){",
     "    if(sx.id==='dscr'){",
     "      b.onclick=function(){ miniForm('DSCR Calculator',[",
     "        {key:'noi',label:'NOI',placeholder:'1200000'},",
     "        {key:'ads',label:'Annual Debt Service',placeholder:'950000'}",
     "      ],function(v){ var p='Calculate DSCR for NOI='+v.noi+' and Annual Debt Service='+v.ads+'. One line, then Why it matters.'; ask(p); }); };",
-    "    }",
-    "    else if(sx.id==='dy'){",
+    "    } else if(sx.id==='dy'){",
     "      b.onclick=function(){ miniForm('Debt Yield',[",
     "        {key:'noi',label:'NOI',placeholder:'1200000'},",
     "        {key:'loan',label:'Loan',placeholder:'14000000'}",
     "      ],function(v){ var p='Debt Yield if NOI='+v.noi+' and Loan='+v.loan+'?'; ask(p); }); };",
-    "    }",
-    "    else if(sx.id==='size'){",
+    "    } else if(sx.id==='size'){",
     "      b.onclick=function(){ miniForm('Size My Loan',[",
     "        {key:'noi',label:'NOI',placeholder:'1200000'},",
     "        {key:'rate',label:'Rate %',placeholder:'7'},",
@@ -194,32 +178,20 @@ app.get("/console", (_req, res) => {
     "        {key:'dscr',label:'Min DSCR',placeholder:'1.25'},",
     "        {key:'ltv',label:'Max LTV %',placeholder:'65'},",
     "        {key:'val',label:'Value',placeholder:'20000000'}",
-    "      ],function(v){",
-    "        var p='Max loan if NOI='+v.noi+', rate='+v.rate+'%, amort='+v.am+' years, DSCR>= '+v.dscr+', LTV<= '+v.ltv+'%, value='+v.val+'. Show binding constraint.';",
-    "        ask(p);",
-    "      }); };",
-    "    }",
-    "    else if(sx.id==='ber'){",
+    "      ],function(v){ var p='Max loan if NOI='+v.noi+', rate='+v.rate+'%, amort='+v.am+' years, DSCR>= '+v.dscr+', LTV<= '+v.ltv+'%, value='+v.val+'. Show binding constraint.'; ask(p); }); };",
+    "    } else if(sx.id==='ber'){",
     "      b.onclick=function(){ miniForm('Break-Even Rate',[",
     "        {key:'noi',label:'NOI',placeholder:'1200000'},",
     "        {key:'loan',label:'Loan',placeholder:'13000000'},",
     "        {key:'am',label:'Amort yrs',placeholder:'30'},",
     "        {key:'dscr',label:'Target DSCR',placeholder:'1.20'}",
-    "      ],function(v){",
-    "        var p='At NOI='+v.noi+', loan='+v.loan+', amort='+v.am+' years, what interest rate makes DSCR='+v.dscr+'?';",
-    "        ask(p);",
-    "      }); };",
-    "    }",
-    "    else if(sx.id==='cap'){",
+    "      ],function(v){ var p='At NOI='+v.noi+', loan='+v.loan+', amort='+v.am+' years, what interest rate makes DSCR='+v.dscr+'?'; ask(p); }); };",
+    "    } else if(sx.id==='cap'){",
     "      b.onclick=function(){ miniForm('Cap-Value-NOI',[",
     "        {key:'noi',label:'NOI',placeholder:'1400000'},",
     "        {key:'cap',label:'Cap %',placeholder:'6.75'}",
-    "      ],function(v){",
-    "        var p='Solve Value if NOI='+v.noi+' at '+v.cap+'% cap.';",
-    "        ask(p);",
-    "      }); };",
-    "    }",
-    "    else if(sx.id==='refi'){",
+    "      ],function(v){ var p='Solve Value if NOI='+v.noi+' at '+v.cap+'% cap.'; ask(p); }); };",
+    "    } else if(sx.id==='refi'){",
     "      b.onclick=function(){ miniForm('Refi Check',[",
     "        {key:'noi',label:'NOI',placeholder:'1300000'},",
     "        {key:'val',label:'Value',placeholder:'21000000'},",
@@ -227,13 +199,9 @@ app.get("/console", (_req, res) => {
     "        {key:'am',label:'Amort yrs',placeholder:'30'},",
     "        {key:'dscr',label:'Min DSCR',placeholder:'1.25'},",
     "        {key:'ltv',label:'Max LTV %',placeholder:'65'}",
-    "      ],function(v){",
-    "        var p='Refi check: NOI='+v.noi+', value='+v.val+', rate='+v.rate+'%, amort='+v.am+' yrs, DSCR>= '+v.dscr+', LTV<= '+v.ltv+'%. Pass/fail with max loan numbers.';",
-    "        ask(p);",
-    "      }); };",
+    "      ],function(v){ var p='Refi check: NOI='+v.noi+', value='+v.val+', rate='+v.rate+'%, amort='+v.am+' yrs, DSCR>= '+v.dscr+', LTV<= '+v.ltv+'%. Pass/fail with max loan numbers.'; ask(p); }); };",
     "    }",
     "  }",
-
     "  chips.appendChild(b);",
     "});",
 
