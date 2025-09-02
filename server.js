@@ -1,165 +1,141 @@
-/* CRE360 panel — ultra-safe, no ShadowDOM, NL prompts, {message} payload */
-(function () {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+// server.js — CRE360 Signal API (stable, ASCII-only)
+const express = require("express");
+const cors = require("cors");
+const { OpenAI } = require("openai");
+require("dotenv").config();
 
-  function init() {
-    // Find the first script tag that has data-endpoint (or just use the last script tag)
-    var cfg = document.querySelector('script[data-endpoint]') || (function () {
-      var s = document.getElementsByTagName('script');
-      return s[s.length - 1] || null;
-    })();
+const app = express();
+app.use(cors());            // lock later if you want
+app.use(express.json());
 
-    // Config (all optional)
-    var API_BASE  = cfg && cfg.getAttribute('data-api-base') ? cfg.getAttribute('data-api-base') : '';
-    var ENDPOINT  = cfg && cfg.getAttribute('data-endpoint')  ? cfg.getAttribute('data-endpoint')  : '/chat';
-    var BOT_NAME  = cfg && cfg.getAttribute('data-bot-name')  ? cfg.getAttribute('data-bot-name')  : 'CRE360 Assistant';
-    var C_PRIMARY = cfg && cfg.getAttribute('data-primary')   ? cfg.getAttribute('data-primary')   : '#BFA77A';
-    var C_SURFACE = cfg && cfg.getAttribute('data-surface')   ? cfg.getAttribute('data-surface')   : '#0B0B0B';
-    var C_TEXT    = cfg && cfg.getAttribute('data-text')      ? cfg.getAttribute('data-text')      : '#FFFFFF';
-    var C_ACCENT  = cfg && cfg.getAttribute('data-accent')    ? cfg.getAttribute('data-accent')    : '#D9CBA2';
+// ---------- OpenAI ----------
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-    // If API_BASE not provided, use same-origin (works inside /console iframe)
-    if (!API_BASE) API_BASE = window.location.origin;
+// Voice + quick context
+const SYSTEM_PROMPT = [
+  "You are CRE360 Signal — institutional, concise, decisive.",
+  "Prioritize extended-stay hotels, underwriting logic, development risk, and daily Signals.",
+  "Style: point-first answer, then 2-4 bullets with specifics. No fluff.",
+  "Never claim to be a broker; refer to CRE360 Advisory for representation."
+].join(" ");
 
-    // ===== Mount basic DOM (no Shadow DOM)
-    var host = document.createElement('div');
-    host.id = 'cre360-panel-host';
-    host.style.position = 'fixed';
-    host.style.right = '24px';
-    host.style.bottom = '24px';
-    host.style.zIndex = 999999;
-    document.body.appendChild(host);
+const CONTEXT = [
+  "Extended-stay: resilient occupancy, lean staffing, lower turnover costs, weekly LOS economics.",
+  "Deal screening: sponsor track record, capital stack clarity, brand or flag fit, site feasibility, exit paths.",
+  "Development risk: entitlements, GC capacity and schedule realism, lender covenants, contingency sufficiency.",
+  "Operator lens: cash conversion cycle, FF&E and PIP exposure, ramp realism, RevPAR vs comp set."
+].join(" ");
 
-    // CSS
-    var style = document.createElement('style');
-    style.innerHTML =
-      '*{box-sizing:border-box}'+
-      '.cre360-btn{cursor:pointer;border:none}'+
-      '.cre360-fab{width:56px;height:56px;border-radius:50%;background:'+C_PRIMARY+';color:#111;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 30px rgba(0,0,0,.3);font-weight:700}'+
-      '.cre360-panel{position:fixed;right:24px;bottom:96px;width:360px;max-width:90vw;height:560px;max-height:80vh;border-radius:16px;overflow:hidden;background:'+C_SURFACE+';color:'+C_TEXT+';box-shadow:0 24px 60px rgba(0,0,0,.5);display:none;flex-direction:column;border:1px solid rgba(255,255,255,.08)}'+
-      '.cre360-panel.open{display:flex}'+
-      '.cre360-header{padding:14px 16px;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));border-bottom:1px solid rgba(255,255,255,.08);display:flex;align-items:center;gap:12px}'+
-      '.cre360-badge{width:28px;height:28px;border-radius:8px;background:'+C_PRIMARY+';display:grid;place-items:center;color:#111;font-weight:800}'+
-      '.cre360-title{font-size:14px;font-weight:700;letter-spacing:.3px}'+
-      '.cre360-sub{font-size:12px;opacity:.75}'+
-      '.cre360-msgs{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:12px}'+
-      '.cre360-bubble{padding:12px 14px;border-radius:12px;max-width:85%;line-height:1.35;font-size:14px;white-space:pre-wrap}'+
-      '.cre360-user{background:rgba(255,255,255,.08);align-self:flex-end}'+
-      '.cre360-bot{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06)}'+
-      '.cre360-starter{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px 16px}'+
-      '.cre360-chip{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);color:'+C_TEXT+';padding:8px 10px;border-radius:999px;font-size:12px;text-align:center;cursor:pointer}'+
-      '.cre360-inputBar{display:flex;gap:8px;padding:12px;border-top:1px solid rgba(255,255,255,.08);background:'+C_SURFACE+'}'+
-      '.cre360-input{flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);color:'+C_TEXT+';border-radius:10px;padding:10px 12px;font-size:14px}'+
-      '.cre360-send{padding:10px 14px;border-radius:10px;background:'+C_PRIMARY+';color:#111;font-weight:700}'+
-      '.cre360-foot{padding:8px 12px;font-size:11px;text-align:center;opacity:.7}'+
-      '.cre360-link{color:'+C_ACCENT+';text-decoration:none}'+
-      '.cre360-typing{font-size:12px;opacity:.7;padding:0 16px 8px;display:none}';
-    document.head.appendChild(style);
+// ---------- /chat ----------
+app.post("/chat", async (req, res) => {
+  try {
+    const text = String((req.body && req.body.message) || "").slice(0, 8000);
+    if (!text) return res.status(400).json({ error: "Missing message" });
 
-    // Structure
-    var fab = document.createElement('button');
-    fab.className = 'cre360-btn cre360-fab';
-    fab.setAttribute('aria-label','Open CRE360 chat');
-    fab.appendChild(document.createTextNode('✦'));
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Transfer-Encoding", "chunked");
 
-    var panel = document.createElement('section'); panel.className = 'cre360-panel';
-    var header = document.createElement('div'); header.className = 'cre360-header';
-    header.innerHTML = '<div class="cre360-badge">C</div><div><div class="cre360-title">'+BOT_NAME+'</div><div class="cre360-sub">Here’s the deal — ask me something specific.</div></div>';
+    const stream = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      stream: true,
+      temperature: 0.4,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: CONTEXT },
+        { role: "user", content: text }
+      ]
+    });
 
-    var starter = document.createElement('div'); starter.className = 'cre360-starter';
-    var typing = document.createElement('div'); typing.className = 'cre360-typing'; typing.appendChild(document.createTextNode('CRE360 Assistant is typing…'));
-    var msgs = document.createElement('div'); msgs.className = 'cre360-msgs';
-
-    var inputBar = document.createElement('div'); inputBar.className = 'cre360-inputBar';
-    var field = document.createElement('input'); field.className = 'cre360-input'; field.placeholder = 'Type your question…';
-    var send = document.createElement('button'); send.className = 'cre360-btn cre360-send'; send.appendChild(document.createTextNode('Send'));
-    inputBar.appendChild(field); inputBar.appendChild(send);
-
-    var foot = document.createElement('div'); foot.className = 'cre360-foot';
-    foot.innerHTML = 'Powered by <a class="cre360-link" href="https://cre360.ai" target="_blank" rel="noopener">CRE360</a>';
-
-    panel.appendChild(header); panel.appendChild(starter); panel.appendChild(typing);
-    panel.appendChild(msgs); panel.appendChild(inputBar); panel.appendChild(foot);
-
-    host.appendChild(fab); host.appendChild(panel);
-
-    fab.addEventListener('click', function () { panel.classList.toggle('open'); });
-
-    // Helpers
-    function bubble(text, who) {
-      var el = document.createElement('div');
-      el.className = 'cre360-bubble ' + (who === 'user' ? 'cre360-user' : 'cre360-bot');
-      el.textContent = text;
-      msgs.appendChild(el);
-      msgs.scrollTop = msgs.scrollHeight;
-      return el;
+    for await (const chunk of stream) {
+      const delta =
+        (chunk.choices &&
+          chunk.choices[0] &&
+          chunk.choices[0].delta &&
+          chunk.choices[0].delta.content) ||
+        "";
+      if (delta) res.write(delta);
     }
-    function setTyping(v){ typing.style.display = v ? 'block' : 'none'; }
-
-    function sendToBackend(question) {
-      return fetch(API_BASE + ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: question })
-      });
-    }
-
-    function streamResponse(resp, botEl) {
-      if (!resp || !resp.ok) { botEl.textContent = 'Sorry—service is busy. Try again.'; return Promise.resolve(); }
-      if (!resp.body || !resp.body.getReader) {
-        // fallback no-stream
-        return resp.text().then(function (t) { botEl.textContent = t; });
-      }
-      var reader = resp.body.getReader();
-      var decoder = new TextDecoder();
-      function pump() {
-        return reader.read().then(function (r) {
-          if (r.done) return;
-          botEl.textContent += decoder.decode(r.value, { stream: true });
-          msgs.scrollTop = msgs.scrollHeight;
-          return pump();
-        });
-      }
-      return pump();
-    }
-
-    function ask(q) {
-      if (!q) return;
-      bubble(q, 'user');
-      field.value = '';
-      setTyping(true);
-      var botEl = bubble('', 'bot');
-      sendToBackend(q)
-        .then(function (r) { return streamResponse(r, botEl); })
-        .catch(function () { botEl.textContent = 'Network error. Please retry.'; })
-        .finally(function () { setTyping(false); });
-    }
-
-    send.addEventListener('click', function(){ ask(field.value.trim()); });
-    field.addEventListener('keydown', function(e){ if (e.key === 'Enter') ask(field.value.trim()); });
-
-    // 8 quick prompts (natural-language)
-    var buttons = [
-      { label:'📰 Today’s Signal',    text:"Give me today’s CRE360 Signal in 3 bullets." },
-      { label:'📈 Rates Now',         text:"What are today’s CRE rates? (10Y, 5Y, SOFR, Prime, 2s10s spread). Include Source | Date (CT)." },
-      { label:'🧮 DSCR',              text:"Calculate DSCR for NOI=1,200,000 and Annual Debt Service=950,000. One line, then Why it matters." },
-      { label:'🧮 Debt Yield',        text:"Debt Yield if NOI=1,200,000 and Loan=14,000,000?" },
-      { label:'🏦 Size My Loan',      text:"Max loan if NOI=1,200,000, rate=7%, amort=30 years, DSCR≥1.25, LTV≤65%, value=20,000,000. Show binding constraint." },
-      { label:'🎯 Break-Even Rate',   text:"At NOI=1,200,000, loan=13,000,000, amort=30 years, what interest rate makes DSCR=1.20?" },
-      { label:'📐 Cap↔Value↔NOI',     text:"Solve Value if NOI=1,400,000 at 6.75% cap." },
-      { label:'🔁 Refi Check',        text:"Refi check: NOI=1,300,000, value=21,000,000, rate=7.25%, amort=30 yrs, DSCR≥1.25, LTV≤65%. Pass/fail with max loan numbers." }
-    ];
-    for (var i=0;i<buttons.length;i++){
-      var chip = document.createElement('button');
-      chip.className = 'cre360-chip';
-      chip.appendChild(document.createTextNode(buttons[i].label));
-      (function(txt){ chip.addEventListener('click', function(){ ask(txt); }); })(buttons[i].text);
-      starter.appendChild(chip);
-    }
-
-    bubble('Welcome to '+BOT_NAME+'. Ask about underwriting, extended-stay strategy, or today’s Signal.');
+    res.end();
+  } catch (e) {
+    console.error("Chat error:", e && e.message ? e.message : e);
+    try { res.end(" (service error)"); } catch {}
   }
+});
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
-  else init();
-})();
+// ---------- /console (inline UI, no external JS) ----------
+app.get("/console", (_req, res) => {
+  const API = process.env.RENDER_EXTERNAL_URL || "https://cre360-signal-api.onrender.com";
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  const html = [
+    "<!doctype html>",
+    "<html><head><meta charset='utf-8'/>",
+    "<meta name='viewport' content='width=device-width, initial-scale=1'/>",
+    "<title>CRE360 Signal Console</title>",
+    "<style>",
+    ":root{--bg:#0B0B0B;--text:#FFFFFF;--gold:#BFA77A;--muted:rgba(255,255,255,.72);--line:rgba(255,255,255,.10)}",
+    "html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:Inter,Arial,sans-serif}",
+    ".panel{display:flex;flex-direction:column;height:100vh;border-radius:16px;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.35);",
+    " background:#0B0B0B; background-image:",
+    "  linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,0) 30%),",
+    "  radial-gradient(800px 400px at 100% 0, rgba(191,167,122,.08), transparent 60%);",
+    " background-blend-mode:overlay}",
+    ".head{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line);",
+    " background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02))}",
+    ".brand{font-weight:800;letter-spacing:.3px;font-size:16px}",
+    ".powered{font-size:12px;color:var(--muted)} .powered .gold{color:var(--gold)}",
+    ".sub{padding:8px 16px 10px;font-size:13px;color:var(--muted)}",
+    ".chips{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:0 16px 12px}",
+    ".chip{border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--text);border-radius:999px;padding:8px 10px;font-size:12px;cursor:pointer;text-align:center}",
+    "@media (max-width:1024px){.chips{grid-template-columns:1fr}}",
+    ".msgs{flex:1;overflow:auto;padding:10px 16px;display:flex;flex-direction:column;gap:10px}",
+    ".b{padding:12px 14px;border-radius:12px;max-width:92%;line-height:1.35;font-size:14px;white-space:pre-wrap}",
+    ".u{background:rgba(255,255,255,.10);align-self:flex-end}",
+    ".t{background:rgba(255,255,255,.06);border:1px solid var(--line);align-self:flex-start}",
+    ".input{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line);background:rgba(255,255,255,.02)}",
+    ".f{flex:1;background:rgba(255,255,255,.10);border:1px solid var(--line);color:#fff;border-radius:10px;padding:11px 12px;font-size:14px}",
+    ".s{padding:10px 14px;border:none;border-radius:10px;background:var(--gold);color:#111;font-weight:800;cursor:pointer}",
+    ".foot{padding:6px 12px;font-size:11px;text-align:center;color:var(--muted);border-top:1px solid var(--line)}",
+    "</style></head><body>",
+    "<div class='panel'>",
+    "<div class='head'>",
+    "<div class='brand'>CRE360 Signal</div>",
+    "<div class='powered'>Powered by <span>ChatGPT</span> + <span class='gold'>CRE360.ai</span></div>",
+    "</div>",
+    "<div class='sub'>Operator-grade market intelligence - ask sharper questions.</div>",
+    "<div id='chips' class='chips'></div>",
+    "<div id='m' class='msgs'></div>",
+    "<div class='input'><input id='f' class='f' placeholder='Ask the Signal...'><button id='s' class='s'>Send</button></div>",
+    "<div class='foot'>&#169; CRE360 - Institutional, decisive, no fluff.</div>",
+    "</div>",
+    "<script>",
+    "(function(){",
+    "var API='" + API + "';",
+    "var m=document.getElementById('m'), f=document.getElementById('f'), s=document.getElementById('s'), chips=document.getElementById('chips');",
+    "var starters=[",
+    " { label:'Today\\'s Signal', text:'Give me today\\'s CRE360 Signal in 3 bullets.' },",
+    " { label:'Market Pulse',    text:'Give a 2-bullet market pulse for CRE this week.' },",
+    " { label:'Deal Screener',   text:'Screen a CRE deal: what 3 red flags should I check first?' },",
+    " { label:'Dev Risk Radar',  text:'List the top 3 execution risks on a new hotel development.' }",
+    "];",
+    "starters.forEach(function(sx){ var b=document.createElement('button'); b.className='chip'; b.textContent=sx.label; b.onclick=function(){ f.value=sx.text; f.focus(); }; chips.appendChild(b); });",
+    "function bub(t,who){ var d=document.createElement('div'); d.className='b '+who; d.textContent=t; m.appendChild(d); m.scrollTop=m.scrollHeight; return d; }",
+    "async function ask(q){ if(!q) return; bub(q,'u'); f.value=''; var bot=bub('...', 't');",
+    " try{ var r=await fetch(API+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:q})});",
+    " if(!r.body){ bot.textContent='(service error)'; return; } var rd=r.body.getReader(), dec=new TextDecoder(); bot.textContent='';",
+    " while(true){ var x=await rd.read(); if(x.done) break; bot.textContent+=dec.decode(x.value,{stream:true}); m.scrollTop=m.scrollHeight; }",
+    " }catch(e){ bot.textContent='(network error)'; } }",
+    "s.onclick=function(){ ask(f.value.trim()); };",
+    "f.onkeydown=function(e){ if(e.key==='Enter') ask(f.value.trim()); };",
+    "bub('Here is the deal - ask about underwriting, extended-stay, or today\\'s Signal.','t');",
+    "})();",
+    "</script>",
+    "</body></html>"
+  ].join("");
+  res.send(html);
+});
+
+// health
+app.get("/", (_req, res) => res.send("CRE360 Signal API running"));
+
+const PORT = process.env.PORT || 8787;
+app.listen(PORT, () => console.log("[CRE360] Listening on " + PORT));
