@@ -318,7 +318,7 @@ app.get("/console", (_req, res) => {
     "f.onkeydown=function(e){ if(e.key==='Enter') ask(f.value.trim()); };",
 
     // Greeting
-    "bub('Here is the deal - ask about underwriting, extended-stay, or today\\'s Signal.','t');",
+    "bub('Disclaimer: I do not provide investment advice. I will do my best to help you analyze CRE360 signals, underwriting, and development risks.','t');",
 
     "})();",
     "</script>",
