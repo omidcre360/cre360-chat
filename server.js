@@ -86,12 +86,12 @@ app.get("/console", (_req, res) => {
     "var API='" + API + "';",
     "var m=document.getElementById('m'), f=document.getElementById('f'), s=document.getElementById('s');",
     "var chips=document.getElementById('chips');",
-    "var starters=[",
-    " {label:'Today\\'s Signal', text:'Give me today\\'s CRE360 Signal in 3 bullets.'},",
-    " {label:'Underwriting', text:'Pressure-test my extended-stay underwriting.'},",
-    " {label:'Extended-Stay', text:'Why are extended-stay hotels outperforming in 2025?'},",
-    " {label:'Risk Check', text:'List the top 3 execution risks on a new hotel development.'}",
-    "];",
+   var starters=[
+  {label:'Today\'s Signal', text:'Give me today\'s CRE360 Signal in 3 bullets.'},
+  {label:'Market Pulse',   text:'Give a 2-bullet market pulse for CRE this week.'},
+  {label:'Deal Screener',  text:'Screen a CRE deal: what 3 red flags should I check first?'},
+  {label:'Dev Risk Radar', text:'List the top 3 execution risks on a new hotel development.'}
+];
     "starters.forEach(function(sx){ var b=document.createElement('button'); b.className='chip'; b.textContent=sx.label; b.onclick=function(){ f.value=sx.text; f.focus(); }; chips.appendChild(b); });",
     "function bub(t,who){ var d=document.createElement('div'); d.className='b '+who; d.textContent=t; m.appendChild(d); m.scrollTop=m.scrollHeight; return d; }",
     "async function ask(q){ if(!q) return; bub(q,'u'); f.value=''; var bot=bub('...', 't');",
